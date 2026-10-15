@@ -1,0 +1,9 @@
+apiVersion: 1
+
+providers:
+  - name: notifyr
+    folder: Notifyr
+    type: file
+    disableDeletion: true
+    options:
+      path: /etc/grafana/provisioning/dashboards

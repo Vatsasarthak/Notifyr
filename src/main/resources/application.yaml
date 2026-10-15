@@ -1,0 +1,202 @@
+# Configuration is driven by environment variables. The variable names are the same ones used by
+# docker-compose.yml and documented in .env.example. When the app is started from the project
+# directory (mvnw spring-boot:run or VS Code), a local .env file is imported automatically.
+# Real environment variables always take precedence over values from .env.
+
+spring:
+  application:
+    name: Notifyr
+
+  config:
+    import: optional:file:${NOTIFYR_ENV_FILE:.env}[.properties]
+
+  # Graceful shutdown (SIGTERM, docker stop): finish in-flight HTTP requests, let message listeners complete
+  # the current delivery, and let scheduled jobs (outbox relay) finish their batch. docker-compose.yml gives
+  # the container a matching stop_grace_period.
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:notifyr_db}
+    username: ${POSTGRES_USER:notifyr_user}
+    password: ${POSTGRES_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:20}
+
+  flyway:
+    enabled: true
+    # Lets a database whose tables were created before Flyway was introduced be adopted at version 1.
+    # On an empty database every migration (V1, V2, ...) runs normally.
+    baseline-on-migrate: true
+    baseline-version: 1
+
+  # Off: holding a database connection for the whole HTTP request limits throughput. Services define
+  # their own transactions and map entities to DTOs inside them.
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_DEFAULT_USER:notifyr_user}
+    password: ${RABBITMQ_DEFAULT_PASS}
+    connection-timeout: 5s
+    # detect a hung or partitioned broker within seconds instead of the client defaults (60 s / 10 min)
+    requested-heartbeat: 10s
+    channel-rpc-timeout: 10s
+    # the outbox relay waits for broker confirms before marking events as published
+    publisher-confirm-type: simple
+    listener:
+      simple:
+        concurrency: ${WORKER_CONCURRENCY:4}
+        max-concurrency: ${WORKER_MAX_CONCURRENCY:8}
+        prefetch: ${WORKER_PREFETCH:20}
+        # Never requeue a rejected message: that would redeliver it in a tight loop.
+        default-requeue-rejected: false
+        # Unexpected listener errors (e.g. database unavailable) are retried in-process,
+        # then the message is republished to the dead-letter queue (see RabbitMQConfig).
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 1s
+          multiplier: 2.0
+          max-interval: 10s
+
+  # outbox relay, campaign scheduler, recovery and cleanup jobs must not block each other
+  task:
+    scheduling:
+      pool:
+        size: 4
+      shutdown:
+        await-termination: true
+        await-termination-period: 20s
+
+  data.web.pageable:
+    max-page-size: 100
+
+  mail:
+    host: ${MAIL_HOST:live.smtp.mailtrap.io}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+          connectiontimeout: 10000
+          timeout: 10000
+          writetimeout: 10000
+
+notification:
+  # Required. Clients send it in the X-API-KEY header.
+  api-key: ${API_KEY}
+  jwt:
+    # Required. HMAC-SHA signing key, at least 32 bytes.
+    secret: ${JWT_SECRET}
+    expiration-ms: ${JWT_EXPIRATION_MS:3600000}
+  # true = log email/SMS instead of calling SMTP/Twilio. Such notifications end in status SIMULATED.
+  mock-provider: ${MOCK_PROVIDER:false}
+  # First ADMIN, created at startup when no ADMIN exists (the public /auth/register cannot create admins).
+  bootstrap-admin:
+    username: ${BOOTSTRAP_ADMIN_USERNAME:}
+    password: ${BOOTSTRAP_ADMIN_PASSWORD:}
+  # artificial latency of the mock providers (to emulate a real provider in load tests)
+  mock-provider-delay-ms: ${MOCK_PROVIDER_DELAY_MS:0}
+  delivery:
+    # retries after the first attempt (delays 30 s, 2 min, 5 min); then FAILED + dead-letter queue
+    max-retries: 3
+    # a notification PROCESSING for longer than this is presumed abandoned by a crashed worker
+    processing-lease: ${PROCESSING_LEASE:PT5M}
+  outbox:
+    poll-interval-ms: ${OUTBOX_POLL_INTERVAL_MS:100}
+    batch-size: ${OUTBOX_BATCH_SIZE:200}
+    confirm-timeout-ms: 5000
+    retention-hours: 24
+    # health turns DOWN when the oldest unpublished event is older than this
+    max-healthy-age: PT5M
+  recovery:
+    interval-ms: 60000
+    initial-delay-ms: 60000
+    stale-queued-after: PT15M
+  mail:
+    from: ${MAIL_FROM:hello@demomailtrap.co}
+  twilio:
+    account-sid: ${TWILIO_ACCOUNT_SID:}
+    auth-token: ${TWILIO_AUTH_TOKEN:}
+    from-number: ${TWILIO_FROM_NUMBER:}
+  # Fraction (0.0-1.0) of deliveries that fail on purpose, for exercising retries. Keep 0.0 outside testing.
+  simulate-failure-rate: ${SIMULATE_FAILURE_RATE:0.0}
+  push:
+    delay-ms: ${PUSH_DELAY_MS:1000}
+  queue:
+    name: notification.queue
+  exchange:
+    name: notification.exchange
+  routing-key: notification.route
+  retry:
+    exchange: notification.retry.exchange
+    queue-30s: notification.retry.30s
+    queue-2m: notification.retry.2m
+    queue-5m: notification.retry.5m
+    routing-key-30s: retry.30s
+    routing-key-2m: retry.2m
+    routing-key-5m: retry.5m
+    ttl-30s: ${RETRY_TTL_30S_MS:30000}
+    ttl-2m: ${RETRY_TTL_2M_MS:120000}
+    ttl-5m: ${RETRY_TTL_5M_MS:300000}
+  dlq:
+    exchange: notification.dlq.exchange
+    queue: notification.dlq
+    routing-key: dlq.route
+  campaign-dispatch:
+    exchange: campaign.dispatch.exchange
+    queue: campaign.dispatch.queue
+    routing-key: campaign.dispatch.route
+
+management:
+  # Actuator runs on its own port, which docker-compose does not expose beyond localhost / the compose network.
+  server:
+    port: ${MANAGEMENT_PORT:9091}
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus
+  endpoint:
+    health:
+      # Component details (database, Redis, RabbitMQ) are shown only to callers with an ADMIN JWT.
+      show-details: ${HEALTH_SHOW_DETAILS:when-authorized}
+      roles: ADMIN
+  health:
+    # An SMTP outage should not mark the whole service as DOWN; delivery failures are tracked per notification.
+    mail:
+      enabled: ${MAIL_HEALTH_CHECK_ENABLED:false}
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+
+logging:
+  # adds [correlationId] to every log line (see CorrelationIdFilter); LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs switches to JSON
+  pattern:
+    correlation: "[%X{correlationId:-}] "
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+
+server:
+  port: ${SERVER_PORT:${APP_PORT:8080}}
+  shutdown: graceful

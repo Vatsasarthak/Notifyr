@@ -1,0 +1,14 @@
+# Keep secrets and build output out of the Docker build context
+.env
+.env.*
+!.env.example
+target/
+.git/
+.idea/
+.vscode/
+*.iml
+*.log
+logs/
+grafana/
+perf/
+docs/

@@ -1,0 +1,21 @@
+# Overrides for integration tests (activated with @ActiveProfiles("test")).
+# PostgreSQL, RabbitMQ and Redis connection details come from Testcontainers (@ServiceConnection).
+notification:
+  api-key: test-api-key
+  jwt:
+    secret: test-jwt-secret-that-is-at-least-32-bytes-long
+  mock-provider: true
+  # ADMIN created at startup by AdminBootstrap (ApiIntegrationTest logs in with it)
+  bootstrap-admin:
+    username: it-admin
+    password: correct-horse-battery
+  simulate-failure-rate: 0.0
+  push:
+    delay-ms: 0
+  outbox:
+    poll-interval-ms: 50
+
+# MockMvc tests reach actuator through the application port
+management:
+  server:
+    port: ${server.port:8080}
